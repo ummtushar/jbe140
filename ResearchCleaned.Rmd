@@ -1,0 +1,406 @@
+---
+title: "Research"
+output: pdf_document
+date: "2023-10-09"
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+Begin with loading data, an example of the first 5 rows are shown.
+
+```{r data/dependencies loading}
+library(magrittr) # activate the package
+library(dplyr) # activate the package
+# Useful function to install packages if they were not installed yet and load them otherwise 
+for(pkg in c("statnet", "igraph", "intergraph")){
+  if(!require(pkg, character.only = TRUE)) 
+  {
+    install.packages(pkg, repos = 'http://cloud.r-project.org')
+    library(pkg, character.only = TRUE)
+  }
+}
+library(igraph)
+library(dplyr)
+library(tidyr)
+
+data = readRDS("SDC_data_2021.rds")
+data[1:5,]
+```
+
+## Filter data
+
+We filter the data to only those partnerships where one of the
+participants is a shipping related company in the Netherlands or within
+close countries. Then we ensure that for each deal we have, all
+participants are added to the data even if they otherwise don't fall
+within the the categories
+
+```{r data/dependencies loading}
+filtered_data <- data[grepl("shipping", 
+                            data$business_description, ignore.case = TRUE),]
+filtered_data = filtered_data[filtered_data$date_terminated == "",] # only get alliances that are still active
+
+filtered_data <- filtered_data[filtered_data$participant_nation 
+                                 %in% c("Netherlands", 
+                                        "Belgium",
+                                        "France",
+                                        "United Kingdom",
+                                        "Germany"),]
+# get all other participants of deals we already have
+relevant_deals = unique(filtered_data$deal_number)
+relevant_data  = data[data$deal_number %in% relevant_deals,]
+
+# combine them
+final_data <- bind_rows(filtered_data, relevant_data)
+final_data <- distinct(final_data)
+
+final_data
+
+```
+
+## Extract vertices and connections
+
+```{r extract vertices}
+unique_participants <- unique(final_data$participants)
+unique_deals <- unique(final_data$deal)
+
+g <- graph.empty(directed = FALSE)
+# create vertices for both deals and participants
+g <- add.vertices(g, length(unique_participants))
+g <- add.vertices(g, length(unique_deals))
+# differentiate between deals and participants
+V(g)$name <- append(unique_deals, unique_participants)
+V(g)$type <- append(rep(0, length(unique_deals)), 
+                     rep(1, length(unique_participants)))
+V(g)$color <- append(rep("red", length(unique_deals)), 
+                     rep("blue", length(unique_participants)))
+V(g)$shape <- append(rep("square", length(unique_deals)), 
+                     rep("circle", length(unique_participants)))
+V(g)$label <- append(rep("", length(unique_deals)), unique_participants)
+
+for (i in 1:nrow(final_data)){
+  deal = final_data[i, ]
+  g <- add.edges(g, c(deal$participants, deal$deal_number))
+}
+# draw plot to the png
+set.seed(2023)
+png("bipartite_plot.png", width = 500, height = 500)
+plot(g, 
+     vertex.label.cex = 0.2,
+     vertex.size = 5, directed = FALSE)
+legend("topright", legend = c("Deals", "Participants"), 
+       col = c("red", "blue"), pch = c(15, 1), # the diamond is hollow but whatever
+       title = "Legend", cex = 0.8)
+dev.off()
+#show png
+knitr::include_graphics("bipartite_plot.png")
+
+```
+
+provide a projection
+
+```{r projection, echo=FALSE}
+types = c(rep(FALSE, length(unique_deals)), rep(TRUE, length(unique_participants)))
+projections <- bipartite.projection(g, types=types)
+g_companies_projection = projections$proj2
+
+
+# get the descriptions from our companies
+# these are used later on
+# immediately read the description once again and indicate
+# whether it is a shipping company
+V(g_companies_projection)$is_shipping = FALSE
+for (i in 1:length(V(g_companies_projection))){
+  vertex <- V(g_companies_projection)[i]
+  name = vertex$name
+  description = final_data[final_data$participants==name, "business_description"][[1]]
+  V(g_companies_projection)[i]$description = description
+  if (grepl("shipping", description, ignore.case=TRUE)) {
+    V(g_companies_projection)[i]$is_shipping = TRUE 
+  } else {
+    V(g_companies_projection)[i]$is_shipping = FALSE
+  }
+  
+}
+
+
+V(g_companies_projection)$color <- ifelse(
+  V(g_companies_projection)$is_shipping, "red", "blue")
+set.seed(2023)
+plot(g_companies_projection, 
+     vertex.label.cex = 0.2,
+     vertex.size = 5, directed = FALSE)
+legend("topright", 
+       legend = c("Shipping Companies", "Other Companies"), 
+       fill = c("red", "blue"),
+       title = "Vertex Colors",
+       cex = 0.8)
+```
+
+split the network note that this is no longer using the projected data:
+We are back to using the bipartite graph.
+
+```{R splitting the network}
+
+subgraphs <- decompose(g)
+subgraph_sizes <- sapply(subgraphs, function(subgraph) length(V(subgraph)))
+sorted_subgraphs <- subgraphs[order(subgraph_sizes, decreasing = TRUE)]
+set.seed(2023)
+for (i in 1:5){
+  plot(sorted_subgraphs[[i]], 
+     vertex.label.cex = 0.1,
+     vertex.size = 5)
+}
+```
+
+```{R figure}
+# draw plot to the png
+set.seed(2023)
+png("biggest_network.png", width = 500, height = 500)
+plot(sorted_subgraphs[[1]], 
+     vertex.label.cex = 0.1,
+     vertex.size = 5)
+legend("topright", legend = c("Deals", "Participants"), 
+       col = c("red", "blue"), pch = c(15, 1), # the diamond is hollow but whatever
+       title = "Legend", cex = 0.8)
+dev.off()
+#show png
+knitr::include_graphics("biggest_network.png")
+```
+
+```{R showing the subgroups}
+g_grouped = g_companies_projection;
+
+
+subgraph_colors <- rainbow(length(sorted_subgraphs))
+for (i in 1:length(sorted_subgraphs)){
+  subgraph = sorted_subgraphs[[i]]
+  V(g_grouped)[V(g_grouped)$name %in% V(subgraph)$name]$color = subgraph_colors[i]
+}
+
+
+plot(g_grouped, 
+     vertex.label.cex = 0.2,
+     vertex.size = 5, directed = FALSE)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to
+prevent printing of the R code that generated the plot.
+
+```{R showing the subgroups}
+degree_centrality <- degree(g_companies_projection, mode = "all", loops = FALSE)
+
+# Calculate closeness centrality for participant vertices only
+closeness_centrality <- closeness(g_companies_projection, normalized = TRUE)
+
+# Calculate betweenness centrality for participant vertices only
+betweenness_c <- betweenness(g_companies_projection, normalized = FALSE)
+
+for (i in 1:length(sorted_subgraphs)){
+  subgraph = sorted_subgraphs[[i]]
+  subgroup = V(g_companies_projection)$name %in% V(subgraph)$name
+  V(g_companies_projection)[subgroup]$netsize = sum(subgroup)
+}
+
+for (i in 1:length(V(g_companies_projection))){
+  vertex <- V(g_companies_projection)[i]
+  name = vertex$name
+  participant_nation = final_data[final_data$participants==name, "participant_nation"][[1]]
+  V(g_companies_projection)[i]$participant_nation = participant_nation
+  
+}
+
+
+
+
+# Create a data frame with participant data and centrality measures
+df_participant_data <- data.frame(
+  participant = V(g_companies_projection)$name,
+  nation = V(g_companies_projection)$participant_nation,
+  network_Size = V(g_companies_projection)$netsize,
+  degree = degree_centrality,
+  closeness = closeness_centrality,
+  betweenness = betweenness_c
+)
+df_participant_data
+```
+
+Start adding the actual business data by writing to csv. This csv will
+be used to search the orbis database.
+
+```{R extract businesses}
+write.csv(df_participant_data, "businesses_data.csv")
+```
+
+To reproduce: Search orbis using "businesses_data.csv" with participant
+as Name and nation as Country: in orbis Bulk Search. Search was
+performed at 10/10/2023. The orbis data is loaded as .xlsx. Note that
+Names are not yet processed: this is because Orbis will handle it
+itself.
+
+```{R load businesses}
+library(readxl)
+company_ids = read_excel("Export_businesses_data.xlsx")
+# note that this is just a dataframe which matches the original company names/countries
+# with those found in orbis. There is no additional information searched on orbis yet.
+company_ids
+df_participant_data$orbis_name <- company_ids$"Matched company name"
+df_participant_data$orbis_name <- gsub("\\s*\\(Previous name:.*\\)", "", df_participant_data$orbis_name)
+df_participant_data$orbis_name <- gsub("\\s*\\(Alias:.*\\)", "", df_participant_data$orbis_name)
+
+df_participant_data
+```
+
+Now we use our matched ids in Orbis to perform a bulk search: to extract
+values such as operating revenue, employee_count, number of
+publications, number of live publications, number of pending
+publications, number of granted publications, number of inventions,
+number of patents
+
+```{R load businesses}
+library(readxl)
+company_data_for_batch <- read_excel("Orbis_results_export.xlsx", sheet="Results")
+# this is an excel file of the results: You can open it in excel to see the
+# search strategy sheet. Which fully shows what was done within orbis.
+mask = !is.na(company_data_for_batch$`Company name Latin alphabet`)
+company_data_for_batch = company_data_for_batch[mask,]
+company_data_for_batch
+
+```
+
+```{R merge data}
+
+
+# standardize the ORBIS bulk search results with the Orbis initial search result
+# done using some manual fixes as the amount of data is low.
+company_data_for_batch$orbis_name = company_data_for_batch$"Company name Latin alphabet"
+replacements <- c("LIMITED" = "LTD.", "Incorporated" = "Inc", "Corporation" = "Corp")
+df = merge(df_participant_data, company_data_for_batch, by="orbis_name", all = TRUE)
+df$orbis_name = gsub("LTD.", "LIMITED", df$orbis_name, TRUE)
+df$orbis_name = gsub("AG", "AKTIENGESELLSCHAFT", df$orbis_name, TRUE)
+df$orbis_name = gsub("N.V.", "NV", df$orbis_name, TRUE)
+
+# merge rows of companies that still have the same name
+# select the first non NA for each merged rows
+df <- df %>%
+  group_by(orbis_name) %>%
+  summarize(across(everything(), ~ first(na.omit(.))))
+
+
+df <- rename(df, "revenue_lyear" = "Operating revenue (Turnover)\nth USD Last avail. yr")
+df <- rename(df, "employee_count" = "Number of employees\nLast avail. yr")
+df <- rename(df, "patent_count" = "Number of patents")
+df <- df %>%
+  rename(
+    number_of_publications = `Number of publications`,
+    number_of_live_publications = `Number of live publications`,
+    number_of_pending_publications = `Number of pending publications`,
+    number_of_granted_publications = `Number of granted publications`,
+    number_of_inventions = `Number of inventions`
+  )
+df$patent_count = as.numeric(df$patent_count)
+```
+
+Merge the orbis data back into our graph
+
+```{R merge orbis data back into graph}
+gplot = g_companies_projection
+df_merge <- df
+df_merge$employee_count = as.integer(df_merge$employee_count)
+df_merge$employee_count
+
+matching_indices <- match(V(gplot)$name, df_merge$participant)
+# set vertex sizes to approximate employee count todo pretty messy loop
+V(gplot)$employee_count = 5
+for (i in 1:length(V(gplot))){
+  vertex <- V(gplot)[i]
+  name = vertex$name
+  rows = df_merge[df_merge$participant == name, ]
+  if (nrow(rows) > 0){
+    count = rows$employee_count[1]
+    if (!is.na(count)){
+      V(gplot)[i]$employee_count = count
+    }
+    
+  }
+  
+}
+S = 0.006 # vertex size per employee
+
+V(gplot)$size = 5 + V(gplot)$employee_count * S
+
+big = V(gplot)$employee_count > 500
+V(gplot)[big]$size = 500 * S + 5
+
+plot(gplot,
+     vertex.label.cex = 0.2, directed = FALSE)
+legend("topright", 
+       legend = c("Shipping Companies", "Other Companies"), 
+       fill = c("red", "blue"),
+       title = "Vertex Colors",
+       cex = 0.8)
+```
+
+```{R modeling}
+df # this is the final dataset we are left with to model
+write.csv(df, "test.csv", row.names = TRUE)
+```
+
+Extracting the correlation between the variables in order to approach a model.
+
+```{r}
+library(lmtest)
+# let's try the anova way
+model_a <- lm(patent_count ~ betweenness + network_Size + betweenness:network_Size, data = df)
+anova_result_a <- anova(model_a)
+summary(anova_result_a)
+print(anova_result_a)
+
+print(model_a)
+# print(lrtest(model_a, "betweenness = 0"))
+aaaa <- lrtest(model_a, "betweenness = 0")
+aaaa
+
+```
+```{r}
+model_constrained <- lm(patent_count ~ network_Size + betweenness:network_Size, data = df)
+model_all <- lm(patent_count ~ betweenness + network_Size + betweenness:network_Size, data = df)
+
+model_anova <- anova(model_constrained, model_all)
+
+print(model_anova)
+
+print("based on these results we cannot reject the null hyp (a)")
+```
+trying something else
+```{r}
+library(sna)
+
+model_a <-lm(patent_count ~ betweenness + network_Size, data = df)
+
+model_interaction_a <- lm(patent_count ~ betweenness * network_Size, data = df)
+
+summary(model_a)
+print("\n")
+summary(model_interaction_a)
+
+print("we still cannot reject the null hup (a)")
+
+```
+
+plotting
+```{r}
+# plot(model_constrained)
+# plot(model_all)
+library("car")
+scatterplot(network_Size ~ patent_count | betweenness, data=df,
+            smoother= FALSE, grid=TRUE)
+# asd
+```

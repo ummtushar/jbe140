@@ -1,0 +1,519 @@
+---
+title: "Research"
+output: pdf_document
+date: "2023-10-09"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+Begin with loading data, an example of the first 5 rows are shown.
+
+```{r data/dependencies loading}
+library(magrittr) # activate the package
+library(dplyr) # activate the package
+# Useful function to install packages if they were not installed yet and load them otherwise 
+for(pkg in c("statnet", "igraph", "intergraph")){
+  if(!require(pkg, character.only = TRUE)) 
+  {
+    install.packages(pkg, repos = 'http://cloud.r-project.org')
+    library(pkg, character.only = TRUE)
+  }
+}
+library(igraph)
+library(dplyr)
+library(tidyr)
+
+data = readRDS("SDC_data_2021.rds")
+data[1:5,]
+```
+## Filter data
+
+We filter the data to only those partnerships where one of the participants is
+a shipping related company in the Netherlands or within close countries.
+Then we ensure that for each deal we have, all participants are added to the data 
+even if they otherwise don't fall within the the categories
+```{r data/dependencies loading}
+filtered_data <- data[grepl("shipping", 
+                            data$business_description, ignore.case = TRUE),]
+filtered_data = filtered_data[filtered_data$date_terminated == "",] # only get alliances that are still active
+
+filtered_data <- filtered_data[filtered_data$participant_nation 
+                                 %in% c("Netherlands", 
+                                        "Belgium",
+                                        "France",
+                                        "United Kingdom",
+                                        "Germany"),]
+# get all other participants of deals we already have
+relevant_deals = unique(filtered_data$deal_number)
+relevant_data  = data[data$deal_number %in% relevant_deals,]
+
+# combine them
+final_data <- bind_rows(filtered_data, relevant_data)
+final_data <- distinct(final_data)
+
+final_data
+
+```
+## Extract vertices and connections
+
+```{r extract vertices}
+unique_participants <- unique(final_data$participants)
+unique_deals <- unique(final_data$deal)
+
+g <- graph.empty(directed = FALSE)
+# create vertices for both deals and participants
+g <- add.vertices(g, length(unique_participants))
+g <- add.vertices(g, length(unique_deals))
+# differentiate between deals and participants
+V(g)$name <- append(unique_deals, unique_participants)
+V(g)$type <- append(rep(0, length(unique_deals)), 
+                     rep(1, length(unique_participants)))
+V(g)$color <- append(rep("red", length(unique_deals)), 
+                     rep("blue", length(unique_participants)))
+V(g)$shape <- append(rep("square", length(unique_deals)), 
+                     rep("circle", length(unique_participants)))
+V(g)$label <- append(rep("", length(unique_deals)), unique_participants)
+
+for (i in 1:nrow(final_data)){
+  deal = final_data[i, ]
+  g <- add.edges(g, c(deal$participants, deal$deal_number))
+}
+# draw plot to the png
+set.seed(2023)
+png("bipartite_plot.png", width = 500, height = 500)
+plot(g, 
+     vertex.label.cex = 0.2,
+     vertex.size = 5, directed = FALSE)
+legend("topright", legend = c("Deals", "Participants"), 
+       col = c("red", "blue"), pch = c(15, 1), # the diamond is hollow but whatever
+       title = "Legend", cex = 0.8)
+dev.off()
+#show png
+knitr::include_graphics("bipartite_plot.png")
+
+```
+
+provide a projection
+```{r projection, echo=FALSE}
+types = c(rep(FALSE, length(unique_deals)), rep(TRUE, length(unique_participants)))
+projections <- bipartite.projection(g, types=types)
+g_companies_projection = projections$proj2
+
+
+# get the descriptions from our companies
+# these are used later on
+# immediately read the description once again and indicate
+# whether it is a shipping company
+V(g_companies_projection)$is_shipping = FALSE
+for (i in 1:length(V(g_companies_projection))){
+  vertex <- V(g_companies_projection)[i]
+  name = vertex$name
+  description = final_data[final_data$participants==name, "business_description"][[1]]
+  V(g_companies_projection)[i]$description = description
+  if (grepl("shipping", description, ignore.case=TRUE)) {
+    V(g_companies_projection)[i]$is_shipping = TRUE 
+  } else {
+    V(g_companies_projection)[i]$is_shipping = FALSE
+  }
+  
+}
+
+
+V(g_companies_projection)$color <- ifelse(
+  V(g_companies_projection)$is_shipping, "red", "blue")
+set.seed(2023)
+plot(g_companies_projection, 
+     vertex.label.cex = 0.2,
+     vertex.size = 5, directed = FALSE)
+legend("topright", 
+       legend = c("Shipping Companies", "Other Companies"), 
+       fill = c("red", "blue"),
+       title = "Vertex Colors",
+       cex = 0.8)
+```
+
+
+split the network note that this is no longer using the projected data:
+We are back to using the bipartite graph.
+```{R splitting the network}
+
+subgraphs <- decompose(g)
+subgraph_sizes <- sapply(subgraphs, function(subgraph) length(V(subgraph)))
+sorted_subgraphs <- subgraphs[order(subgraph_sizes, decreasing = TRUE)]
+set.seed(2023)
+for (i in 1:5){
+  plot(sorted_subgraphs[[i]], 
+     vertex.label.cex = 0.1,
+     vertex.size = 5)
+}
+```
+```{R figure}
+# draw plot to the png
+set.seed(2023)
+png("biggest_network.png", width = 500, height = 500)
+plot(sorted_subgraphs[[1]], 
+     vertex.label.cex = 0.1,
+     vertex.size = 5)
+legend("topright", legend = c("Deals", "Participants"), 
+       col = c("red", "blue"), pch = c(15, 1), # the diamond is hollow but whatever
+       title = "Legend", cex = 0.8)
+dev.off()
+#show png
+knitr::include_graphics("biggest_network.png")
+```
+
+
+
+```{R showing the subgroups}
+g_grouped = g_companies_projection;
+
+
+subgraph_colors <- rainbow(length(sorted_subgraphs))
+for (i in 1:length(sorted_subgraphs)){
+  subgraph = sorted_subgraphs[[i]]
+  V(g_grouped)[V(g_grouped)$name %in% V(subgraph)$name]$color = subgraph_colors[i]
+}
+
+
+plot(g_grouped, 
+     vertex.label.cex = 0.2,
+     vertex.size = 5, directed = FALSE)
+```
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{R showing the subgroups}
+degree_centrality <- degree(g_companies_projection, mode = "all", loops = FALSE)
+
+# Calculate closeness centrality for participant vertices only
+closeness_centrality <- closeness(g_companies_projection, normalized = TRUE)
+
+# Calculate betweenness centrality for participant vertices only
+betweenness_c <- betweenness(g_companies_projection, normalized = FALSE)
+help(betweenness)
+
+for (i in 1:length(sorted_subgraphs)){
+  subgraph = sorted_subgraphs[[i]]
+  subgroup = V(g_companies_projection)$name %in% V(subgraph)$name
+  V(g_companies_projection)[subgroup]$netsize = sum(subgroup)
+}
+
+for (i in 1:length(V(g_companies_projection))){
+  vertex <- V(g_companies_projection)[i]
+  name = vertex$name
+  participant_nation = final_data[final_data$participants==name, "participant_nation"][[1]]
+  V(g_companies_projection)[i]$participant_nation = participant_nation
+  
+}
+
+
+
+
+# Create a data frame with participant data and centrality measures
+df_participant_data <- data.frame(
+  participant = V(g_companies_projection)$name,
+  nation = V(g_companies_projection)$participant_nation,
+  network_Size = V(g_companies_projection)$netsize,
+  degree = degree_centrality,
+  closeness = closeness_centrality,
+  betweenness = betweenness_c
+)
+df_participant_data
+```
+
+Start adding the actual business data by writing to csv. This csv will be
+used to search the orbis database.
+
+```{R extract businesses}
+write.csv(df_participant_data, "businesses_data.csv")
+```
+
+To reproduce: Search orbis using "businesses_data.csv" with
+participant as Name and nation as Country:
+in orbis Bulk Search. Search was performed at 10/10/2023.
+The orbis data is loaded as .xlsx.
+Note that Names are not yet processed: this is because Orbis will handle it 
+itself.
+
+```{R load businesses}
+library(readxl)
+company_ids = read_excel("Export_businesses_data.xlsx")
+# note that this is just a dataframe which matches the original company names/countries
+# with those found in orbis. There is no additional information searched on orbis yet.
+company_ids
+df_participant_data$orbis_name <- company_ids$"Matched company name"
+df_participant_data$orbis_name <- gsub("\\s*\\(Previous name:.*\\)", "", df_participant_data$orbis_name)
+df_participant_data$orbis_name <- gsub("\\s*\\(Alias:.*\\)", "", df_participant_data$orbis_name)
+
+df_participant_data
+```
+
+Now we use our matched ids in Orbis to perform a bulk search: to extract
+values such as operating revenue, employee_count, number of publications, 
+number of live publications, number of pending publications,
+number of granted publications, number of inventions, number of patents
+
+
+```{R load businesses}
+library(readxl)
+company_data_for_batch <- read_excel("Orbis_results_export.xlsx", sheet="Results")
+# this is an excel file of the results: You can open it in excel to see the
+# search strategy sheet. Which fully shows what was done within orbis.
+mask = !is.na(company_data_for_batch$`Company name Latin alphabet`)
+company_data_for_batch = company_data_for_batch[mask,]
+company_data_for_batch
+
+```
+```{R merge data}
+
+
+# standardize the ORBIS bulk search results with the Orbis initial search result
+# done using some manual fixes as the amount of data is low.
+company_data_for_batch$orbis_name = company_data_for_batch$"Company name Latin alphabet"
+replacements <- c("LIMITED" = "LTD.", "Incorporated" = "Inc", "Corporation" = "Corp")
+df = merge(df_participant_data, company_data_for_batch, by="orbis_name", all = TRUE)
+df$orbis_name = gsub("LTD.", "LIMITED", df$orbis_name, TRUE)
+df$orbis_name = gsub("AG", "AKTIENGESELLSCHAFT", df$orbis_name, TRUE)
+df$orbis_name = gsub("N.V.", "NV", df$orbis_name, TRUE)
+
+# merge rows of companies that still have the same name
+# select the first non NA for each merged rows
+df <- df %>%
+  group_by(orbis_name) %>%
+  summarize(across(everything(), ~ first(na.omit(.))))
+
+
+df <- rename(df, "revenue_lyear" = "Operating revenue (Turnover)\nth USD Last avail. yr")
+df <- rename(df, "employee_count" = "Number of employees\nLast avail. yr")
+df <- rename(df, "patent_count" = "Number of patents")
+
+
+df_with_revenue = df[!is.na(df$revenue_lyear),]
+df_with_revenue = df_with_revenue[(df_with_revenue$revenue_lyear!="n.a."),]
+df_with_revenue$employee_count = as.numeric(df_with_revenue$employee_count)
+df_with_revenue$revenue_lyear = as.numeric(df_with_revenue$revenue_lyear)
+summary(df_with_revenue)
+
+```
+```{R model}
+model <- lm(revenue_lyear ~ network_Size + degree + closeness + betweenness + employee_count, data = df_with_revenue)
+summary(model)
+```
+``` {R merge orbis data back into graph}
+gplot = g_companies_projection
+df_merge <- df
+df_merge$employee_count = as.integer(df_merge$employee_count)
+df_merge$employee_count
+
+matching_indices <- match(V(gplot)$name, df_merge$participant)
+# set vertex sizes to approximate employee count todo pretty messy loop
+V(gplot)$employee_count = 5
+for (i in 1:length(V(gplot))){
+  vertex <- V(gplot)[i]
+  name = vertex$name
+  rows = df_merge[df_merge$participant == name, ]
+  if (nrow(rows) > 0){
+    count = rows$employee_count[1]
+    if (!is.na(count)){
+      V(gplot)[i]$employee_count = count
+    }
+    
+  }
+  
+}
+S = 0.006 # vertex size per employee
+
+V(gplot)$size = 5 + V(gplot)$employee_count * S
+
+big = V(gplot)$employee_count > 500
+V(gplot)[big]$size = 500 * S + 5
+
+plot(gplot,
+     vertex.label.cex = 0.2, directed = FALSE)
+legend("topright", 
+       legend = c("Shipping Companies", "Other Companies"), 
+       fill = c("red", "blue"),
+       title = "Vertex Colors",
+       cex = 0.8)
+```
+
+
+
+model the network properties with patent count
+```{R patentdata from orbis}
+df$patent_count = as.numeric(df$patent_count)
+df$patent_count
+
+model <- lm(patent_count ~ network_Size * (degree + closeness + betweenness), data = df)
+summary(model)
+
+df_with_revenue = df[!is.na(df$revenue_lyear),]
+df_with_revenue = df_with_revenue[(df_with_revenue$revenue_lyear!="n.a."),]
+model2 <- lm(revenue_lyear ~ network_Size * (degree + closeness + betweenness), data = df_with_revenue)
+summary(model2)
+```
+```{R patentdata from patentview}
+# standardize patentview assignee names
+# because this is all assignees it can take a while: thus the result is saved and reused  allowing this part to be skipped over when rerunning the code.
+# uncomment if the data is changed
+# the data can be retrieved from patentView, it is the assignee dataset: "g_assignee_disambiguated.tsv"
+# due to the size it cannot be included on the github
+
+#library(devtools)
+#devtools::install_github("stasvlasov/nstandr")
+#library(nstandr)
+
+# using the full datasets available on patentview instead of the API: since the API was very slow
+#patent_assignee = read.table("g_assignee_disambiguated.tsv", header = TRUE, sep = "\t")
+#patent_assignee[1:5,]
+
+
+#patent_assignee$org_name = nstandr::standardize(patent_assignee$disambig_assignee_organization)
+#df$org_name = nstandr::standardize(df$orbis_name)
+
+## join patentview with original df of companies with orbis data
+#result <- df %>%
+#  left_join(patent_assignee, by = "org_name")
+## count number of patents
+#found_patents = result[!is.na(result$patent_id), ]
+#grouped_patents = group_by(found_patents, orbis_name)
+#counts = summarise(grouped_patents, patent_view_count=n(),
+#            .groups = 'drop')
+#df_final <- left_join(df, counts, by = "orbis_name")
+#saveRDS(df_final, "df_final")
+
+```
+
+
+``` {R Final models}
+df <- df %>%
+  rename(
+    number_of_publications = `Number of publications`,
+    number_of_live_publications = `Number of live publications`,
+    number_of_pending_publications = `Number of pending publications`,
+    number_of_granted_publications = `Number of granted publications`,
+    number_of_inventions = `Number of inventions`
+  )
+
+# convert all necessary columns to integers
+# this gives warnings as some values are string "n.a."
+# these are correctly coerced to NA.
+df_research <- mutate_at(df_research, vars(starts_with("number_of"), 
+                                           "revenue_lyear", "employee_count"), as.integer)
+dependent_vars <- cbind(
+  df_research$number_of_granted_publications,
+  df_research$number_of_inventions,
+  df_research$number_of_live_publications,
+  df_research$number_of_pending_publications,
+  df_research$number_of_publications
+)
+model_granted <- lm(number_of_granted_publications ~ network_Size * (degree + closeness + betweenness), data = df_research)
+
+model_inventions <- lm(number_of_inventions ~ network_Size * (degree + closeness + betweenness), data = df_research)
+
+model_live <- lm(number_of_live_publications ~ network_Size * (degree + closeness + betweenness), data = df_research)
+
+model_pending <- lm(number_of_pending_publications ~ network_Size * (degree + closeness + betweenness), data = df_research)
+
+model_total <- lm(number_of_publications ~ network_Size * (degree + closeness + betweenness), data = df_research)
+
+model_employees <- lm(employee_count ~ network_Size * (degree + closeness + betweenness), data = df_research)
+
+model_patentview <- lm(patent_view_count ~ network_Size * (degree + closeness + betweenness), data = df_research)
+
+
+
+cat("Summary for model_granted:\n")
+print(summary(model_granted))
+
+cat("\nSummary for model_inventions:\n")
+print(summary(model_inventions))
+
+cat("\nSummary for model_live:\n")
+print(summary(model_live))
+
+cat("\nSummary for model_pending:\n")
+print(summary(model_pending))
+
+cat("\nSummary for model_total:\n")
+print(summary(model_total))
+
+cat("\nSummary for model_employees:\n")
+print(summary(model_employees))
+
+cat("\nSummary for patentview patents:\n")
+print(summary(model_patentview))
+```
+```{R hypothesis testing}
+# TODO full placeholder DO NOT USE
+
+# Hypothesis 1: The coefficient for "closeness" is not significantly different from zero.
+closeness_coef <- coef(summary(model_inventions))["closeness", "Estimate"]
+closeness_se <- coef(summary(model_inventions))["closeness", "Std. Error"]
+t_stat_closeness <- closeness_coef / closeness_se
+p_value_closeness <- 2 * (1 - pt(abs(t_stat_closeness), df = df.residual(model_inventions)))
+p_value_closeness
+# Hypothesis 2: The interaction between "network_Size" and "betweenness" is not significantly different from zero.
+
+```
+
+
+
+``` {R PLOTS network properties}
+# making plots of network properties of those companies we have data on
+library(ggplot2)
+library(tidyr)
+ggplot(df_research, aes(x = "Network Size", y = network_Size)) +
+  geom_violin(fill = "blue", color = "black") +
+  labs(title = "Violin Plot for Network Size")
+ggplot(df_research, aes(x = "Degree", y = degree)) +
+  geom_violin(fill = "blue", color = "black") +
+  labs(title = "Violin Plot for Degree")
+ggplot(df_research, aes(x = "Closeness", y = closeness)) +
+  geom_violin(fill = "blue", color = "black") +
+  labs(title = "Violin Plot for Closeness")
+ggplot(df_research, aes(x = "Betweenness", y = betweenness)) +
+  geom_violin(fill = "blue", color = "black") +
+  labs(title = "Violin Plot for Betweenness")
+
+```
+
+
+``` {R PLOTS}
+library(ggplot2)
+ggplot(df_research, aes(y = number_of_granted_publications)) +
+  geom_density(fill = "blue", color = "black") +
+  labs(title = "Density Plot for number_of_granted_publications")
+ggplot(df_research, aes(y = number_of_inventions)) +
+  geom_density(fill = "blue", color = "black") +
+  labs(title = "Density Plot for number_of_inventions")
+ggplot(df_research, aes(y = number_of_live_publications)) +
+  geom_density(fill = "blue", color = "black") +
+  labs(title = "Density Plot for number_of_live_publications")
+ggplot(df_research, aes(y = number_of_pending_publications)) +
+  geom_density(fill = "blue", color = "black") +
+  labs(title = "Density Plot for number_of_pending_publications")
+ggplot(df_research, aes(y = number_of_publications)) +
+  geom_density(fill = "blue", color = "black") +
+  labs(title = "Density Plot for number_of_publications")
+df_research
+
+```
+
+
+```{R Model For Hyp}
+
+# Hypothesis 1a: Betweenness Centrality Effect on Number of Patents
+model_1a <- lm(patent_count ~ betweenness + network_Size + betweenness:network_Size, data = df_research)
+summary(model_1a)
+
+# Hypothesis 1b: Interaction Effect of 'Degree' and 'Network Size' on Number of Patents
+model_1b <- lm(patent_count ~ degree + network_Size + degree:network_Size, data = df_research)
+summary(model_1b)
+
+
+
+```
