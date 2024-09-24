@@ -1,0 +1,41 @@
+---
+title: "EDA"
+author: "Puck Kwaspen"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(igraph)
+library(dplyr)
+library(tidyr)
+```
+
+```{r data}
+# reading in the data
+df <- readRDS("SDC_data_2021.rds")
+str(df)  # check structure
+class(df) # data is a dataframe, so we don't need to convert it
+```
+
+# We will show the unique entries in each of the columns
+
+```{r column entries, echo=FALSE}
+#### Uncomment these to get a full list printed of all the unique entries in a col
+
+#unique(df$participants)
+#unique(df$business_description)
+#unique(df$alliance_deal_name)
+
+#### Using this, you can check for the unique entries with a certain word in it (e.g. transport) add the word and column name
+unique(df$business_description[grepl("transport", df$business_description)])
+
+colnames(df)
+
+```
+
+```{r}
+filtered_data <- subset(df, participants == "Royal Dutch/Shell Group" & participant_nation == "Netherlands")
+```
+
