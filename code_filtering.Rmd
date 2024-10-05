@@ -1,0 +1,70 @@
+---
+title: "code_filtering"
+author: "Data Diggers"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r data}
+# reading in the data
+df <- readRDS("SDC_data_2021.rds")
+# Convert 'date_announced' to Date format
+df$date_announced <- as.Date(df$date_announced, format = "%Y-%m-%d")
+
+str(df)  # check structure
+colnames(df) # column names
+
+unique(df$type) # unique types of relationships
+unique(df$participant_nation) # unique types of relationships
+unique(df$business_description) # unique types of businesses
+```
+
+
+
+```{r}
+# Convert 'date_announced' to Date format
+df$date_announced <- as.Date(df$date_announced, format = "%Y-%m-%d")
+
+# Filter based on participant nation, type, dates before 2006, and business description
+filtered_data <- subset(df, 
+                        participant_nation == "United States" & 
+                        type == "Strategic Alliance" & 
+                        date_announced < as.Date("2006-01-01") & 
+                        grepl("Bank|Banking", business_description, ignore.case = TRUE))
+
+# Count occurrences of each participant in the filtered data
+participant_counts <- table(filtered_data$participants)
+
+# Total number of unique participants
+total_participants <- length(unique(filtered_data$participants))
+
+# View the total number of participants
+print(total_participants)
+```
+
+```{r}
+# Convert 'date_announced' to Date format
+df$date_announced <- as.Date(df$date_announced, format = "%Y-%m-%d")
+
+# Filter based on participant nation, type, dates before 2006, and business description
+filtered_data <- subset(df, 
+                        participant_nation == "United States" & 
+                        type == "Strategic Alliance" & 
+                        date_announced > as.Date("2006-01-01") & 
+                        grepl("Bank|Banking", business_description, ignore.case = TRUE))
+
+# Count occurrences of each participant in the filtered data
+participant_counts <- table(filtered_data$participants)
+
+# Total number of unique participants
+total_participants <- length(unique(filtered_data$participants))
+
+# View the total number of participants
+print(total_participants)
+{}

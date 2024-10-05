@@ -17,9 +17,14 @@ library(tidyr)
 df <- readRDS("SDC_data_2021.rds")
 str(df)  # check structure
 class(df) # data is a dataframe, so we don't need to convert it
+df
 ```
 
 # We will show the unique entries in each of the columns
+
+```{r}
+unique(df$type)
+```
 
 ```{r column entries, echo=FALSE}
 #### Uncomment these to get a full list printed of all the unique entries in a col
@@ -37,5 +42,18 @@ colnames(df)
 
 ```{r}
 filtered_data <- subset(df, participants == "Royal Dutch/Shell Group" & participant_nation == "Netherlands")
+
+# Load dplyr package
+library(dplyr)
+
+# Create a dataframe with the count of participants per business description
+result_df <- df %>%
+  group_by(business_description) %>%
+  summarise(count = n_distinct(participants)) %>%
+  arrange(desc(count))
+
+# Display the result
+result_df
+
 ```
 
