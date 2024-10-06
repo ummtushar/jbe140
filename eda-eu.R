@@ -11,10 +11,13 @@ library(ggraph)
 library(tidygraph)
 library(dplyr)
 library(tidyr)
+library(stringr)
+
 
 # Loading the data 
 data = readRDS("SDC_data_2021.rds")
 data[1:5,]
+
 
 # Convert 'date_announced' to Date format
 data$date_announced <- as.Date(data$date_announced, format = "%Y-%m-%d")
@@ -26,10 +29,10 @@ eu_countries <- c("Austria", "Belgium", "Bulgaria", "Cyprus", "Czech Republic",
                   "Malta", "Netherlands", "Poland", "Portugal", "Romania", 
                   "Slovakia", "Slovenia", "Spain", "Sweden", "United Kingdom")
 
-# Filter data for bank business description and specific date range (2006-2010)
 filtered_data <- data[grepl("Bank|Banking", data$business_description, ignore.case = TRUE) & 
-                        data$date_announced >= as.Date("2006-01-01") & 
-                        data$date_announced <= as.Date("2010-12-31"),]
+                        data$date_announced >= as.Date("2003-01-01") & 
+                        data$date_announced <= as.Date("2007-12-31") & 
+                        str_starts(as.character(data$SIC_primary), "60"), ] 
 
 # Further filter for Strategic Alliances
 filtered_data <- filtered_data[filtered_data$type == 'Strategic Alliance',]
@@ -37,8 +40,9 @@ filtered_data <- filtered_data[filtered_data$type == 'Strategic Alliance',]
 # Remove terminated deals (keeping active ones)
 filtered_data <- filtered_data[filtered_data$date_terminated == "",]
 
-# Filter for EU countries
-filtered_data <- filtered_data[filtered_data$participant_nation %in% eu_countries,]
+# Filter for EU countries / US
+# filtered_data <- filtered_data[filtered_data$participant_nation %in% eu_countries,]
+filtered_data <- filtered_data[filtered_data$participant_nation %in% 'United States',]
 
 # Get all other participants of deals we already have
 relevant_deals = unique(filtered_data$deal_number)
@@ -72,7 +76,7 @@ g <- graph_from_data_frame(edge_list, directed = FALSE)
 # Plot using Fruchterman-Reingold layout
 ggraph(g, layout = 'fr') +  
   geom_edge_link(aes(edge_alpha = 0.5), show.legend = FALSE) +  
-  geom_node_point(size = 5, color = 'skyblue') +  
+  geom_node_point(size = 0.5, color = 'skyblue') +  
   geom_node_text(aes(label = name), repel = TRUE, size = 3) +  
   theme_void()
 
