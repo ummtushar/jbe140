@@ -1,59 +1,157 @@
 ---
-title: "EDA"
-author: "Puck Kwaspen"
-date: "`r Sys.Date()`"
-output: html_document
+title: "R Notebook"
+output: html_notebook
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-library(igraph)
-library(dplyr)
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code.
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*.
+
+```{r}
 library(tidyr)
-```
-
-```{r data}
-# reading in the data
-df <- readRDS("SDC_data_2021.rds")
-str(df)  # check structure
-class(df) # data is a dataframe, so we don't need to convert it
-df
-```
-
-# We will show the unique entries in each of the columns
-
-```{r}
-unique(df$type)
-```
-
-```{r column entries, echo=FALSE}
-#### Uncomment these to get a full list printed of all the unique entries in a col
-
-#unique(df$participants)
-#unique(df$business_description)
-#unique(df$alliance_deal_name)
-
-#### Using this, you can check for the unique entries with a certain word in it (e.g. transport) add the word and column name
-unique(df$business_description[grepl("transport", df$business_description)])
-
-colnames(df)
-
-```
-
-```{r}
-filtered_data <- subset(df, participants == "Royal Dutch/Shell Group" & participant_nation == "Netherlands")
-
-# Load dplyr package
 library(dplyr)
+library(igraph)
+library(stringr)
+library(lubridate)
 
-# Create a dataframe with the count of participants per business description
-result_df <- df %>%
-  group_by(business_description) %>%
-  summarise(count = n_distinct(participants)) %>%
-  arrange(desc(count))
 
-# Display the result
-result_df
+
+sdc_data <- readRDS("/Users/tushargupta/Desktop/Uni/Y3/Q1/JBE140/Assignment/data/SDC_data_2021.rds")
+
+sdc_data
+```
+
+```{r}
+rds2csv <- function(file) {
+
+  data <- readRDS(file)
+  outfile <- gsub(".Rds", ".csv", file)
+  write.csv(data, file='SDC.csv', row.names = F)
+
+}
+
+rds2csv("/Users/tushargupta/Desktop/Uni/Y3/Q1/JBE140/Assignment/data/SDC_data_2021.rds")
+```
+
+## ATTRIBUTES OF DATAFRAME
+
+```{r}
+data <- read.csv("SDC.csv")
+
+str(data)
+```
+
+
+## BENELUX ALLIANCES WITHOUT TERMINATION
+
+```{r}
+# benelux_alliances <- sdc_data %>%
+#   filter(date_terminated == "", # Assuming you want to filter for empty strings
+#          date_announced > "2005-01-01",
+#          date_announced < "2011-12-31",
+#          participant_nation %in% c("Belgium", "Netherlands", "Luxembourg"),
+#          grepl("cargo", business_description, ignore.case = TRUE) |
+#          grepl("freight", business_description, ignore.case = TRUE)) %>%
+#   select(participants, date_announced, business_description, type, SIC_primary,
+#          participant_nation, deal_number)
+benelux_alliances <- sdc_data %>%
+  filter((is.na(date_terminated) | date_terminated == ""),  # Handle both NA and empty string for date_terminated
+         date_announced > "2005-01-01",
+         date_announced < "2011-12-31",
+         participant_nation %in% c("Belgium", "Netherlands", "Luxembourg")) %>%
+  select(participants, date_announced, business_description, type, SIC_primary,
+         participant_nation, deal_number)
+         
+         
+head(benelux_alliances$participants)
+
+benelux_alliances_net <- benelux_alliances %>%
+                        select(participants, deal_number) %>%
+                              as.matrix()
+# benelux_alliances_net
+
+benelux_alliances_graph <- graph_from_data_frame(benelux_alliances_net, directed = FALSE, vertex.label = "")
+
+plot(benelux_alliances_graph)
+
+igraph::graph_attr(benelux_alliances)
+# distinct_actors <- benelux_alliances %>%
+#   distinct(participants)
+# 
+# distinct_actors
+```
+
+## US ALLIANCES WITHOUT TERMINATION
+
+```{r}
+us_alliances <- sdc_data %>%
+  filter((is.na(date_terminated) | date_terminated == ""),  # Handle both NA and empty string for date_terminated
+         date_announced > "1983-01-01",
+         date_announced < "2007-12-31",
+         str_starts(SIC_primary, "60") | SIC_primary == "6211",
+         # str_detect(business_description, regex("bank", ignore_case = TRUE)),  # Filter for "bank" or "Bank"
+         participant_nation %in% c("United States")) %>%
+  select(participants, date_announced, business_description, type, SIC_primary,
+         participant_nation, deal_number)
+
+us_alliances_net <- us_alliances %>%
+                        select(participants, deal_number) %>%
+                              as.matrix()
+
+
+
+us_alliances_net
+
+us_alliances_graph <- graph_from_data_frame(us_alliances_net, directed = FALSE)
+
+V(us_alliances_graph)$label <- ""
+
+V(us_alliances_graph)$size = 1
+
+
+plot(us_alliances_graph)
+# plot(us_alliances_graph, layout = layout_with_fr)
+
+centrality =  igraph::degree(us_alliances_graph, mode = "total", normalized = FALSE)[order(igraph::betweenness(us_alliances_graph), decreasing = TRUE)]
+
+centrality
+
+
+igraph::betweenness(us_alliances_graph)[order(igraph::betweenness(us_alliances_graph), decreasing = TRUE)]
+
+
 
 ```
 
+
+## US ALLIANCE WITH TERMINATION
+```{r}
+us_alliances1 <- sdc_data %>%
+  # Convert date_terminated to Date format and filter out rows within the specified range
+  mutate(date_terminated = mdy(date_terminated)) %>%  # Assuming the format is MM/DD/YY
+  filter((is.na(date_terminated) | date_terminated < "1983-01-01" | date_terminated > "2007-12-31"),
+         date_announced > "2007-01-01",
+         date_announced < "2011-12-31",
+         str_starts(SIC_primary, "60") | SIC_primary == "6211",
+         # str_detect(business_description, regex("bank", ignore_case = TRUE)),  # Filter for "bank" or "Bank"
+         participant_nation %in% c("United States")) %>%
+  select(participants, date_announced, business_description, type, SIC_primary,
+         participant_nation, deal_number)
+
+us_alliances_net1 <- us_alliances1 %>%
+                        select(participants, deal_number) %>%
+                              as.matrix()
+
+
+
+us_alliances_net1
+
+us_alliances_graph1 <- graph_from_data_frame(us_alliances_net1, directed = FALSE)
+
+V(us_alliances_graph1)$label <- ""
+
+V(us_alliances_graph1)$size = 1
+
+
+plot(us_alliances_graph1)
+```
