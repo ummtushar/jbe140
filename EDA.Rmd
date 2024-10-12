@@ -41,7 +41,6 @@ data <- read.csv("SDC.csv")
 str(data)
 ```
 
-
 ## BENELUX ALLIANCES WITHOUT TERMINATION
 
 ```{r}
@@ -123,20 +122,29 @@ igraph::betweenness(us_alliances_graph)[order(igraph::betweenness(us_alliances_g
 
 ```
 
-
 ## US ALLIANCE WITH TERMINATION
+
 ```{r}
 us_alliances1 <- sdc_data %>%
-  # Convert date_terminated to Date format and filter out rows within the specified range
-  mutate(date_terminated = mdy(date_terminated)) %>%  # Assuming the format is MM/DD/YY
-  filter((is.na(date_terminated) | date_terminated < "1983-01-01" | date_terminated > "2007-12-31"),
-         date_announced > "2007-01-01",
-         date_announced < "2011-12-31",
-         str_starts(SIC_primary, "60") | SIC_primary == "6211",
-         # str_detect(business_description, regex("bank", ignore_case = TRUE)),  # Filter for "bank" or "Bank"
+  # Use separate parsing for two-digit and four-digit years
+  mutate(
+    date_terminated = ifelse(
+      str_detect(date_terminated, "^\\d{2}/\\d{2}/\\d{2}$"), 
+      mdy(date_terminated), 
+      ymd(date_terminated)
+    )
+  ) %>%
+  filter((is.na(date_terminated) | (date_terminated >= as.Date("1983-01-01") & date_terminated <= as.Date("2009-12-31"))),
+         date_announced > "1983-01-01",
+         date_announced < "2009-12-31",
+         # str_starts(SIC_primary, "60") | SIC_primary == "6211",
+         str_detect(business_description, regex("bank", ignore_case = TRUE)),  # Uncomment if you need "bank" filter
          participant_nation %in% c("United States")) %>%
   select(participants, date_announced, business_description, type, SIC_primary,
          participant_nation, deal_number)
+
+
+# Checking
 
 us_alliances_net1 <- us_alliances1 %>%
                         select(participants, deal_number) %>%
@@ -154,4 +162,119 @@ V(us_alliances_graph1)$size = 1
 
 
 plot(us_alliances_graph1)
+```
+
+## Saving to csv
+
+```{r}
+write.csv(us_alliances1, "data/us_alliances_filtered2009.csv", row.names = FALSE)
+
+```
+
+## Paired t-test
+
+### Hypothesis 1: The financial crisis had no significant effect on network closeness centrality among medium-sized banks.
+
+Null Hypothesis (H0): The financial crisis of 2008 had no significant effect on the network closeness centrality among medium-sized banks. In other words, there is no difference in the mean closeness centrality between 2007 and 2009.
+
+Alternative Hypothesis (H1): There is a significant effect, meaning the mean closeness centrality differs between 2007 and 2009.
+
+```{r}
+# Load the datasets
+data_2007 <- read.csv("data/us_alliances_filtered.csv")
+data_2009 <- read.csv("data/us_alliances_filtered2009.csv")
+
+# Create graph objects for each dataset
+graph_2007 <- graph_from_data_frame(data_2007, directed = FALSE)
+graph_2009 <- graph_from_data_frame(data_2009, directed = FALSE)
+
+# Calculate closeness centrality for each graph
+closeness_2007 <- as.data.frame(closeness(graph_2007))
+closeness_2009 <- as.data.frame(closeness(graph_2009))
+
+# Rename columns for clarity
+colnames(closeness_2007) <- c("closeness_2007")
+colnames(closeness_2009) <- c("closeness_2009")
+
+# Add node names to dataframes
+closeness_2007$node <- V(graph_2007)$name
+closeness_2009$node <- V(graph_2009)$name
+
+# Merge the datasets by node
+merged_data <- merge(closeness_2007, closeness_2009, by = "node")
+
+# Perform the paired t-test
+t_test_result <- t.test(merged_data$closeness_2007, merged_data$closeness_2009, paired = TRUE)
+
+# Print the results
+print(t_test_result)
+```
+
+### Hypothesis 2: The number of network actors is significantly affected by betweenness centrality.
+
+Null Hypothesis (H0): The number of network actors is not significantly affected by betweenness centrality, meaning there is no significant difference in the mean betweenness centrality between 2007 and 2009.
+
+Alternative Hypothesis (H1): The number of network actors is significantly affected by betweenness centrality, indicating a significant difference in the mean betweenness centrality between 2007 and 2009.
+
+```{r}
+# Load the datasets
+data_2007 <- read.csv("data/us_alliances_filtered.csv")
+data_2009 <- read.csv("data/us_alliances_filtered2009.csv")
+
+# Create graph objects for each dataset
+graph_2007 <- graph_from_data_frame(data_2007, directed = FALSE)
+graph_2009 <- graph_from_data_frame(data_2009, directed = FALSE)
+
+# Calculate betweenness centrality for each graph
+betweenness_2007 <- as.data.frame(betweenness(graph_2007))
+betweenness_2009 <- as.data.frame(betweenness(graph_2009))
+
+# Rename columns for clarity
+colnames(betweenness_2007) <- c("betweenness_2007")
+colnames(betweenness_2009) <- c("betweenness_2009")
+
+# Add node names to dataframes
+betweenness_2007$node <- V(graph_2007)$name
+betweenness_2009$node <- V(graph_2009)$name
+
+# Merge the datasets by node to ensure a paired comparison
+merged_data <- merge(betweenness_2007, betweenness_2009, by = "node")
+
+# Perform the paired t-test
+t_test_result <- t.test(merged_data$betweenness_2007, merged_data$betweenness_2009, paired = TRUE)
+
+# Print the results
+print(t_test_result)
+```
+
+```{r}
+library(dplyr)
+
+# Read the datasets
+data_2007 <- read.csv("data/us_alliances_filtered.csv")
+data_2009 <- read.csv("data/us_alliances_filtered2009.csv")
+
+# Count alliances for each bank in 2007 and 2009
+alliances_2007 <- data_2007 %>% 
+  group_by(participants) %>%
+  summarise(count_2007 = n())
+
+alliances_2009 <- data_2009 %>% 
+  group_by(participants) %>%
+  summarise(count_2009 = n())
+
+# Merge the datasets
+merged_data <- full_join(alliances_2007, alliances_2009, by = "participants")
+
+# Replace NA values with 0
+merged_data[is.na(merged_data)] <- 0
+
+# Calculate the change in alliance count
+merged_data$change <- merged_data$count_2009 - merged_data$count_2007
+
+# Perform linear regression
+lm_result <- lm(count_2007 ~ change, data = merged_data)
+
+# Print the regression summary
+summary(lm_result)
 ```
