@@ -1,0 +1,338 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code.
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*.
+
+```{r}
+library(tidyr)
+library(dplyr)
+library(igraph)
+library(stringr)
+library(lubridate)
+
+
+
+sdc_data <- readRDS("SDC_data_2021.rds")
+
+sdc_data
+```
+
+```{r}
+rds2csv <- function(file) {
+
+  data <- readRDS(file)
+  outfile <- gsub(".Rds", ".csv", file)
+  write.csv(data, file='SDC.csv', row.names = F)
+
+}
+
+rds2csv("SDC_data_2021.rds")
+```
+
+## ATTRIBUTES OF DATAFRAME
+
+```{r}
+data <- read.csv("SDC.csv")
+
+str(data)
+```
+
+## BENELUX ALLIANCES WITHOUT TERMINATION
+
+```{r}
+# benelux_alliances <- sdc_data %>%
+#   filter(date_terminated == "", # Assuming you want to filter for empty strings
+#          date_announced > "2005-01-01",
+#          date_announced < "2011-12-31",
+#          participant_nation %in% c("Belgium", "Netherlands", "Luxembourg"),
+#          grepl("cargo", business_description, ignore.case = TRUE) |
+#          grepl("freight", business_description, ignore.case = TRUE)) %>%
+#   select(participants, date_announced, business_description, type, SIC_primary,
+#          participant_nation, deal_number)
+benelux_alliances <- sdc_data %>%
+  filter((is.na(date_terminated) | date_terminated == ""),  # Handle both NA and empty string for date_terminated
+         date_announced > "2005-01-01",
+         date_announced < "2011-12-31",
+         participant_nation %in% c("Belgium", "Netherlands", "Luxembourg")) %>%
+  select(participants, date_announced, business_description, type, SIC_primary,
+         participant_nation, deal_number)
+         
+         
+head(benelux_alliances$participants)
+
+benelux_alliances_net <- benelux_alliances %>%
+                        select(participants, deal_number) %>%
+                              as.matrix()
+# benelux_alliances_net
+
+benelux_alliances_graph <- graph_from_data_frame(benelux_alliances_net, directed = FALSE, vertex.label = "")
+
+plot(benelux_alliances_graph)
+
+igraph::graph_attr(benelux_alliances)
+# distinct_actors <- benelux_alliances %>%
+#   distinct(participants)
+# 
+# distinct_actors
+```
+
+## US ALLIANCES WITHOUT TERMINATION
+
+```{r}
+us_alliances <- sdc_data %>%
+  filter((is.na(date_terminated) | date_terminated == ""),  # Handle both NA and empty string for date_terminated
+         date_announced > "1983-01-01",
+         date_announced < "2007-12-31",
+         str_starts(SIC_primary, "60") | SIC_primary == "6211",
+         # str_detect(business_description, regex("bank", ignore_case = TRUE)),  # Filter for "bank" or "Bank"
+         participant_nation %in% c("United States")) %>%
+  select(participants, date_announced, business_description, type, SIC_primary,
+         participant_nation, deal_number)
+
+us_alliances_net <- us_alliances %>%
+                        select(participants, deal_number) %>%
+                              as.matrix()
+
+us_alliances_net
+
+us_alliances_graph <- graph_from_data_frame(us_alliances_net, directed = FALSE)
+
+V(us_alliances_graph)$label <- ""
+
+V(us_alliances_graph)$size = 1
+
+
+plot(us_alliances_graph)
+# plot(us_alliances_graph, layout = layout_with_fr)
+
+centrality =  igraph::degree(us_alliances_graph, mode = "total", normalized = FALSE)[order(igraph::betweenness(us_alliances_graph), decreasing = TRUE)]
+
+centrality
+
+
+igraph::betweenness(us_alliances_graph)[order(igraph::betweenness(us_alliances_graph), decreasing = TRUE)]
+```
+
+## US ALLIANCE WITH TERMINATION
+
+```{r}
+us_alliances1 <- sdc_data %>%
+  # Use separate parsing for two-digit and four-digit years
+  mutate(
+    date_terminated = ifelse(
+      str_detect(date_terminated, "^\\d{2}/\\d{2}/\\d{2}$"), 
+      mdy(date_terminated), 
+      ymd(date_terminated)
+    )
+  ) %>%
+  filter((is.na(date_terminated) | (date_terminated >= as.Date("1983-01-01") & date_terminated <= as.Date("2009-12-31"))),
+         date_announced > "1983-01-01",
+         date_announced < "2009-12-31",
+         # str_starts(SIC_primary, "60") | SIC_primary == "6211",
+         str_detect(business_description, regex("bank", ignore_case = TRUE)),  # Uncomment if you need "bank" filter
+         participant_nation %in% c("United States")) %>%
+  select(participants, date_announced, business_description, type, SIC_primary,
+         participant_nation, deal_number)
+
+
+# Checking
+
+us_alliances_net1 <- us_alliances1 %>%
+                        select(participants, deal_number) %>%
+```
+
+
+```{r}
+as.matrix()
+
+
+
+us_alliances_net1
+
+us_alliances_graph1 <- graph_from_data_frame(us_alliances_net1, directed = FALSE)
+
+V(us_alliances_graph1)$label <- ""
+
+V(us_alliances_graph1)$size = 1
+
+
+plot(us_alliances_graph1)
+```
+
+## Saving to csv
+
+```{r}
+write.csv(us_alliances1, "data/us_alliances_filtered2009.csv", row.names = FALSE)
+
+```
+
+## Paired t-test
+
+### Hypothesis 1: The financial crisis had no significant effect on network closeness centrality among medium-sized banks.
+
+Null Hypothesis (H0): The financial crisis of 2008 had no significant effect on the network closeness centrality among medium-sized banks. In other words, there is no difference in the mean closeness centrality between 2007 and 2009.
+
+Alternative Hypothesis (H1): There is a significant effect, meaning the mean closeness centrality differs between 2007 and 2009.
+
+```{r}
+# Load the datasets
+data_2007 <- read.csv("data/us_alliances_filtered_no_bankruptcies.csv")
+data_2009 <- read.csv("data/us_alliances_filtered2009_no_bankruptcies.csv")
+
+# Create graph objects for each dataset
+graph_2007 <- graph_from_data_frame(data_2007, directed = FALSE)
+graph_2009 <- graph_from_data_frame(data_2009, directed = FALSE)
+
+# Calculate closeness centrality for each graph
+closeness_2007 <- as.data.frame(closeness(graph_2007))
+closeness_2009 <- as.data.frame(closeness(graph_2009))
+
+# Rename columns for clarity
+colnames(closeness_2007) <- c("closeness_2007")
+colnames(closeness_2009) <- c("closeness_2009")
+
+# Add node names to dataframes
+closeness_2007$node <- V(graph_2007)$name
+closeness_2009$node <- V(graph_2009)$name
+
+# Merge the datasets by node
+merged_data <- merge(closeness_2007, closeness_2009, by = "node")
+
+# Perform the paired t-test
+t_test_result <- t.test(merged_data$closeness_2007, merged_data$closeness_2009, paired = TRUE)
+
+# Print the results
+print(t_test_result)
+```
+
+### Hypothesis 2: The number of network actors is significantly affected by betweenness centrality.
+
+Null Hypothesis (H0): The number of network actors is not significantly affected by betweenness centrality, meaning there is no significant difference in the mean betweenness centrality between 2007 and 2009.
+
+Alternative Hypothesis (H1): The number of network actors is significantly affected by betweenness centrality, indicating a significant difference in the mean betweenness centrality between 2007 and 2009.
+
+```{r}
+# Load the datasets
+data_2007 <- read.csv("data/us_alliances_filtered_no_bankruptcies.csv")
+data_2009 <- read.csv("data/us_alliances_filtered2009_no_bankruptcies.csv")
+
+# Create graph objects for each dataset
+graph_2007 <- graph_from_data_frame(data_2007, directed = FALSE)
+graph_2009 <- graph_from_data_frame(data_2009, directed = FALSE)
+
+# Calculate betweenness centrality for each graph
+betweenness_2007 <- as.data.frame(betweenness(graph_2007))
+betweenness_2009 <- as.data.frame(betweenness(graph_2009))
+
+# Rename columns for clarity
+colnames(betweenness_2007) <- c("betweenness_2007")
+colnames(betweenness_2009) <- c("betweenness_2009")
+
+# Add node names to dataframes
+betweenness_2007$node <- V(graph_2007)$name
+betweenness_2009$node <- V(graph_2009)$name
+
+# Merge the datasets by node to ensure a paired comparison
+merged_data <- merge(betweenness_2007, betweenness_2009, by = "node")
+
+# Perform the paired t-test
+t_test_result <- t.test(merged_data$betweenness_2007, merged_data$betweenness_2009, paired = TRUE)
+
+# Print the results
+print(t_test_result)
+```
+
+```{r}
+library(dplyr)
+
+# Read the datasets
+data_2007 <- read.csv("data/us_alliances_filtered_no_bankruptcies.csv")
+data_2009 <- read.csv("data/us_alliances_filtered2009_no_bankruptcies.csv")
+
+# Count alliances for each bank in 2007 and 2009
+alliances_2007 <- data_2007 %>% 
+  group_by(participants) %>% 
+  summarise(count_2007 = n())
+
+alliances_2009 <- data_2009 %>% 
+  group_by(participants) %>%
+  summarise(count_2009 = n())
+
+# Merge the datasets
+merged_data <- full_join(alliances_2007, alliances_2009, by = "participants")
+
+# Replace NA values with 0
+merged_data[is.na(merged_data)] <- 0
+
+# Calculate the change in alliance count
+merged_data$change <- merged_data$count_2009 - merged_data$count_2007
+```
+
+
+```{r}
+# Perform linear regression
+lm_result <- lm(count_2007 ~ change, data = merged_data)
+
+# Print the regression summary
+summary(lm_result)
+```
+
+# One Mode Network Graph
+```{r}
+data_2007 <- read.csv("data/us_alliances_filtered_no_bankruptcies.csv")
+data_2009 <- read.csv("data/us_alliances_filtered2009_no_bankruptcies.csv")
+
+## prepare the network data for 1983-2007
+us_alliances_net_1983_2007 <- data_2007 %>%
+  select(participants, deal_number) %>%
+  as.matrix()
+
+us_alliances_graph_1983_2007 <- graph_from_data_frame(us_alliances_net_1983_2007, directed = FALSE)
+
+# Convert to data frame if necessary
+us_alliances_net_1983_2007 <- as.data.frame(us_alliances_net_1983_2007)
+
+# Then proceed with counting unique participants
+unique_participants <- unique(us_alliances_net_1983_2007$participants)
+num_unique_participants <- length(unique_participants)
+
+# Print the number of unique participants
+print(num_unique_participants)
+
+plot(us_alliances_graph_1983_2007, 
+     vertex.label = NA, 
+     vertex.size = 3, 
+     main= "Interorganisational Relationship 1983-2007 (Pre Crisis)")
+
+# Prepare the network data for 1983-2009
+us_alliances_net_1983_2009 <- data_2009 %>%
+  select(participants, deal_number) %>%
+  as.matrix()
+
+# Create the graph for 1983-2009
+us_alliances_graph_1983_2009 <- graph_from_data_frame(us_alliances_net_1983_2009, directed = FALSE)
+
+# Convert to data frame if necessary
+us_alliances_net_1983_2009 <- as.data.frame(us_alliances_net_1983_2009)
+
+# Count unique participants for the post-crisis period
+unique_participants_2009 <- unique(us_alliances_net_1983_2009$participants)
+num_unique_participants_2009 <- length(unique_participants_2009)
+
+# Print the number of unique participants for the post-crisis period
+print(num_unique_participants_2009)
+
+# Set the random seed for reproducibility
+
+set.seed(689)
+# Plot the graph for the post-crisis period
+plot(us_alliances_graph_1983_2009, 
+     vertex.label = NA, 
+     vertex.size = 3, 
+     main = "Interorganisational Relationship 1983 - 2009 (Post Crisis)")
+
+```
